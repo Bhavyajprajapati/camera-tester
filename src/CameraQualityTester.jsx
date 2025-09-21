@@ -28,12 +28,12 @@ const OMRScanner = () => {
   const [isOMRAligned, setIsOMRAligned] = useState(false);
   const [gridType, setGridType] = useState("a4"); // a4, a3, letter
 
-  // Grid configurations for different OMR sheet sizes
+  // Grid configurations for vertical OMR sheet sizes
   const gridConfigs = {
-    a4: { width: 70, height: 85, name: "A4 OMR Sheet" },
-    a3: { width: 80, height: 90, name: "A3 OMR Sheet" },
-    letter: { width: 68, height: 82, name: "Letter Size OMR" },
-    custom: { width: 75, height: 88, name: "Custom OMR Size" },
+    a4: { width: 50, height: 90, name: "A4 OMR Sheet (Vertical)" },
+    a3: { width: 55, height: 92, name: "A3 OMR Sheet (Vertical)" },
+    letter: { width: 52, height: 88, name: "Letter Size OMR (Vertical)" },
+    custom: { width: 48, height: 85, name: "Custom OMR Size (Vertical)" },
   };
 
   useEffect(() => {
@@ -270,7 +270,7 @@ const OMRScanner = () => {
         >
           <div className="bg-dark bg-opacity-75 text-white px-3 py-2 rounded">
             <small className="fw-bold">
-              📄 Align OMR sheet within the green frame
+              📄 Align VERTICAL OMR sheet within the green frame
             </small>
           </div>
         </div>
@@ -374,10 +374,10 @@ const OMRScanner = () => {
                           onChange={(e) => setGridType(e.target.value)}
                           className="form-select"
                         >
-                          <option value="a4">A4 OMR Sheet</option>
-                          <option value="a3">A3 OMR Sheet</option>
-                          <option value="letter">Letter Size</option>
-                          <option value="custom">Custom Size</option>
+                          <option value="a4">A4 OMR Sheet (Vertical)</option>
+                          <option value="a3">A3 OMR Sheet (Vertical)</option>
+                          <option value="letter">Letter Size (Vertical)</option>
+                          <option value="custom">Custom Size (Vertical)</option>
                         </select>
                       </div>
                     </div>
@@ -413,12 +413,14 @@ const OMRScanner = () => {
                             </p>
                             <div className="alert alert-info d-inline-block">
                               <small>
-                                <strong>Tips:</strong>
+                                <strong>Vertical OMR Scanning Tips:</strong>
                                 <br />
-                                • Place OMR sheet flat on a surface
+                                • Hold OMR sheet in PORTRAIT orientation
                                 <br />
-                                • Ensure good lighting
-                                <br />• Align sheet within the green frame
+                                • Place sheet flat with good lighting
+                                <br />
+                                • Align all 4 corners within green frame
+                                <br />• Keep text/bubbles clearly visible
                               </small>
                             </div>
                           </div>
@@ -431,14 +433,17 @@ const OMRScanner = () => {
                       <div className="d-flex align-items-center gap-2">
                         <AlertTriangle size={20} />
                         <div>
-                          <strong>Scanning Instructions:</strong>
+                          <strong>Vertical OMR Scanning Instructions:</strong>
                           <br />
-                          1. Place your OMR sheet within the green frame
+                          1. Hold OMR sheet in PORTRAIT (vertical) orientation
                           <br />
-                          2. Ensure all corners are visible and aligned
+                          2. Place within the green frame - all corners must be
+                          visible
                           <br />
-                          3. The captured image will be automatically cropped to
-                          the OMR area
+                          3. Ensure question numbers and bubble rows are clearly
+                          aligned
+                          <br />
+                          4. Image will be auto-cropped to OMR area only
                         </div>
                       </div>
                     </div>
