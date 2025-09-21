@@ -1,8 +1,7 @@
-// vite.config.js
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
-  base: "/camera-tester/", // <--- Add this
+  base: "/camera-tester/", // <-- important for GitHub Pages
   plugins: [react()],
 });
