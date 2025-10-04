@@ -1,10 +1,9 @@
-import { useState } from "react";
-import CameraQualityTester from "./CameraQualityTester";
+import EnhancedMobileOMRScanner from "./EnhancedMobileOMRScanner";
 
 function App() {
   return (
     <>
-      <CameraQualityTester />
+      <EnhancedMobileOMRScanner />
     </>
   );
 }

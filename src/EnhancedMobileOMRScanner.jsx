@@ -30,32 +30,37 @@ const EnhancedMobileOMRScanner = () => {
   const [devices, setDevices] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [cameraInitialized, setCameraInitialized] = useState(false);
+  const [imageCaptureSupported, setImageCaptureSupported] = useState(false);
+  const imageCaptureRef = useRef(null);
 
-  // Enhanced OMR configurations with grid detection
+  // A4 Paper optimized OMR configurations (A4 = 210mm × 297mm, ratio 1:1.414)
   const omrConfigs = {
     standard: {
-      width: 75,
+      width: 70,
       height: 92,
-      name: "Standard OMR Sheet",
-      aspectRatio: "3:4",
+      name: "Standard OMR Sheet (A4)",
+      aspectRatio: "1:1.414",
       gridRows: 100,
       gridCols: 4,
+      a4Optimized: true,
     },
     long: {
-      width: 72,
-      height: 95,
-      name: "Long OMR Sheet",
-      aspectRatio: "2.8:4",
+      width: 68,
+      height: 94,
+      name: "Long OMR Sheet (A4)",
+      aspectRatio: "1:1.414",
       gridRows: 120,
       gridCols: 4,
+      a4Optimized: true,
     },
     compact: {
-      width: 78,
-      height: 89,
-      name: "Compact OMR Sheet",
-      aspectRatio: "3.2:4",
+      width: 72,
+      height: 90,
+      name: "Compact OMR Sheet (A4)",
+      aspectRatio: "1:1.414",
       gridRows: 80,
       gridCols: 4,
+      a4Optimized: true,
     },
   };
 
@@ -164,14 +169,22 @@ const EnhancedMobileOMRScanner = () => {
         throw new Error("Video element not available");
       }
 
-      // Updated constraints for better compatibility
+      // High-resolution constraints optimized for A4 paper scanning
       const constraints = {
         video: {
           facingMode: { ideal: facingMode },
-          width: { ideal: 1920, min: 640 },
-          height: { ideal: 1080, min: 480 },
+          // Request maximum resolution for A4 scanning (up to 4K)
+          width: { min: 1920, ideal: 3840, max: 4096 },
+          height: { min: 1080, ideal: 2160, max: 4096 },
           frameRate: { ideal: 30, max: 60 },
-          aspectRatio: { ideal: 16 / 9 },
+          // A4 aspect ratio optimization (portrait mode)
+          aspectRatio: { ideal: 9 / 16 },
+          // Request highest quality settings
+          ...(facingMode === "environment" && {
+            focusMode: { ideal: "continuous" },
+            exposureMode: { ideal: "continuous" },
+            whiteBalanceMode: { ideal: "continuous" },
+          }),
         },
         audio: false,
       };
@@ -234,6 +247,23 @@ const EnhancedMobileOMRScanner = () => {
               const capabilities = videoTrack.getCapabilities();
               setFlashAvailable(!!capabilities.torch);
               console.log("Flash available:", !!capabilities.torch);
+            }
+
+            // Initialize ImageCapture API for high-res photos (Android Chrome)
+            try {
+              if (typeof ImageCapture !== "undefined" && videoTrack) {
+                imageCaptureRef.current = new ImageCapture(videoTrack);
+                const photoCapabilities =
+                  await imageCaptureRef.current.getPhotoCapabilities();
+                setImageCaptureSupported(true);
+                console.log("ImageCapture API available");
+                console.log("Photo capabilities:", photoCapabilities);
+              }
+            } catch (e) {
+              console.log(
+                "ImageCapture API not available, using canvas fallback"
+              );
+              setImageCaptureSupported(false);
             }
 
             setIsStreaming(true);
@@ -316,7 +346,7 @@ const EnhancedMobileOMRScanner = () => {
     }
   };
 
-  const detectAndCropOMRGrid = () => {
+  const detectAndCropOMRGrid = async () => {
     if (
       !videoRef.current ||
       !canvasRef.current ||
@@ -328,92 +358,44 @@ const EnhancedMobileOMRScanner = () => {
     }
 
     try {
-      const canvas = canvasRef.current;
       const cropCanvas = cropCanvasRef.current;
       const video = videoRef.current;
+      let sourceCanvas = canvasRef.current;
 
-      // Verify video dimensions
-      if (video.videoWidth === 0 || video.videoHeight === 0) {
-        setError("Video not ready, please wait...");
-        return;
+      // Try to use ImageCapture API for ultra-high resolution (Android Chrome)
+      if (imageCaptureSupported && imageCaptureRef.current) {
+        console.log("Using ImageCapture API for maximum resolution");
+        try {
+          // Take high-res photo using ImageCapture API
+          const photoBlob = await imageCaptureRef.current.takePhoto({
+            imageWidth: 4096,
+            imageHeight: 4096,
+          });
+
+          // Convert blob to image
+          const img = await createImageBitmap(photoBlob);
+
+          console.log("High-res photo captured:", img.width, "x", img.height);
+
+          // Draw to source canvas
+          sourceCanvas.width = img.width;
+          sourceCanvas.height = img.height;
+          const ctx = sourceCanvas.getContext("2d", { alpha: false });
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(img, 0, 0);
+        } catch (err) {
+          console.warn("ImageCapture failed, falling back to video:", err);
+          // Fall back to video stream method
+          await captureFromVideoStream(sourceCanvas, video);
+        }
+      } else {
+        // Fallback: Use video stream
+        await captureFromVideoStream(sourceCanvas, video);
       }
 
-      console.log(
-        "Scanning with video dimensions:",
-        video.videoWidth,
-        "x",
-        video.videoHeight
-      );
-
-      // Set canvas dimensions
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0);
-
-      const config = omrConfigs[omrType];
-
-      // Calculate crop area
-      const cropX = (canvas.width * (100 - config.width)) / 200;
-      const cropY = (canvas.height * (100 - config.height)) / 200;
-      const cropWidth = (canvas.width * config.width) / 100;
-      const cropHeight = (canvas.height * config.height) / 100;
-
-      // Create cropped image
-      cropCanvas.width = cropWidth;
-      cropCanvas.height = cropHeight;
-      const cropCtx = cropCanvas.getContext("2d");
-
-      cropCtx.imageSmoothingEnabled = false;
-      cropCtx.drawImage(
-        canvas,
-        cropX,
-        cropY,
-        cropWidth,
-        cropHeight,
-        0,
-        0,
-        cropWidth,
-        cropHeight
-      );
-
-      // Apply image enhancement
-      const imageData = cropCtx.getImageData(0, 0, cropWidth, cropHeight);
-      const data = imageData.data;
-
-      for (let i = 0; i < data.length; i += 4) {
-        const contrast = 1.3;
-        const brightness = 15;
-
-        data[i] = Math.min(255, Math.max(0, contrast * data[i] + brightness));
-        data[i + 1] = Math.min(
-          255,
-          Math.max(0, contrast * data[i + 1] + brightness)
-        );
-        data[i + 2] = Math.min(
-          255,
-          Math.max(0, contrast * data[i + 2] + brightness)
-        );
-      }
-
-      cropCtx.putImageData(imageData, 0, 0);
-
-      const croppedImageUrl = cropCanvas.toDataURL("image/jpeg", 0.95);
-
-      setCroppedImage({
-        url: croppedImageUrl,
-        width: Math.round(cropWidth),
-        height: Math.round(cropHeight),
-        timestamp: new Date().toISOString(),
-        omrType: config.name,
-        gridRows: config.gridRows,
-        gridCols: config.gridCols,
-        quality: "Enhanced",
-      });
-
-      // Keep camera running for next scan
-      console.log("OMR scan completed successfully - camera still active");
+      // Process the captured image
+      await processCapturedImage(sourceCanvas, cropCanvas);
 
       // Haptic feedback
       if (navigator.vibrate) {
@@ -425,10 +407,141 @@ const EnhancedMobileOMRScanner = () => {
     }
   };
 
+  // Helper function to capture from video stream
+  const captureFromVideoStream = async (canvas, video) => {
+    // Verify video dimensions
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      throw new Error("Video not ready");
+    }
+
+    console.log(
+      "Capturing from video stream:",
+      video.videoWidth,
+      "x",
+      video.videoHeight
+    );
+
+    // Use full video resolution
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    const ctx = canvas.getContext("2d", { alpha: false });
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(video, 0, 0);
+  };
+
+  // Helper function to process the captured image
+  const processCapturedImage = async (sourceCanvas, cropCanvas) => {
+    const config = omrConfigs[omrType];
+
+    // A4 aspect ratio detection and adjustment
+    const sourceAspect = sourceCanvas.height / sourceCanvas.width;
+    const a4Aspect = 297 / 210; // A4 portrait ratio = 1.414
+
+    let cropX, cropY, cropWidth, cropHeight;
+
+    // Intelligent A4-optimized cropping
+    if (Math.abs(sourceAspect - a4Aspect) < 0.1) {
+      // Source aspect matches A4, optimize for full paper capture
+      const padding = 0.05; // 5% padding for alignment tolerance
+      cropX = sourceCanvas.width * padding;
+      cropY = sourceCanvas.height * padding;
+      cropWidth = sourceCanvas.width * (1 - 2 * padding);
+      cropHeight = sourceCanvas.height * (1 - 2 * padding);
+    } else {
+      // Standard center crop with A4 optimization
+      cropX = (sourceCanvas.width * (100 - config.width)) / 200;
+      cropY = (sourceCanvas.height * (100 - config.height)) / 200;
+      cropWidth = (sourceCanvas.width * config.width) / 100;
+      cropHeight = (sourceCanvas.height * config.height) / 100;
+    }
+
+    // Ensure minimum resolution for OMR processing (at least 2000px on longer side for ultra quality)
+    const minResolution = 2000;
+    const scaleFactor = Math.max(
+      1,
+      minResolution / Math.max(cropWidth, cropHeight)
+    );
+
+    const finalWidth = Math.round(cropWidth * scaleFactor);
+    const finalHeight = Math.round(cropHeight * scaleFactor);
+
+    // Create high-resolution cropped image
+    cropCanvas.width = finalWidth;
+    cropCanvas.height = finalHeight;
+    const cropCtx = cropCanvas.getContext("2d", { alpha: false });
+
+    // Enable high-quality image processing
+    cropCtx.imageSmoothingEnabled = true;
+    cropCtx.imageSmoothingQuality = "high";
+
+    cropCtx.drawImage(
+      sourceCanvas,
+      cropX,
+      cropY,
+      cropWidth,
+      cropHeight,
+      0,
+      0,
+      finalWidth,
+      finalHeight
+    );
+
+    // Advanced image enhancement for OMR recognition
+    const imageData = cropCtx.getImageData(0, 0, finalWidth, finalHeight);
+    const data = imageData.data;
+
+    // Optimized processing for better bubble detection
+    for (let i = 0; i < data.length; i += 4) {
+      // Enhanced contrast and sharpness for OMR marks
+      const contrast = 1.4;
+      const brightness = 10;
+      const sharpness = 1.1;
+
+      // Apply contrast and brightness
+      let r = Math.min(255, Math.max(0, contrast * data[i] + brightness));
+      let g = Math.min(255, Math.max(0, contrast * data[i + 1] + brightness));
+      let b = Math.min(255, Math.max(0, contrast * data[i + 2] + brightness));
+
+      // Sharpen edges for better mark detection
+      data[i] = Math.min(255, r * sharpness);
+      data[i + 1] = Math.min(255, g * sharpness);
+      data[i + 2] = Math.min(255, b * sharpness);
+    }
+
+    cropCtx.putImageData(imageData, 0, 0);
+
+    // Save as lossless PNG for perfect quality preservation
+    const croppedImageUrl = cropCanvas.toDataURL("image/png");
+
+    setCroppedImage({
+      url: croppedImageUrl,
+      width: finalWidth,
+      height: finalHeight,
+      timestamp: new Date().toISOString(),
+      omrType: config.name,
+      gridRows: config.gridRows,
+      gridCols: config.gridCols,
+      quality: "Lossless PNG",
+      resolution: `${finalWidth}×${finalHeight}`,
+      optimizedForA4: config.a4Optimized,
+      format: "PNG",
+      captureMethod: imageCaptureSupported
+        ? "ImageCapture API"
+        : "Video Stream",
+    });
+
+    console.log(
+      `A4-optimized OMR scan completed (PNG): ${finalWidth}x${finalHeight}px`,
+      `Method: ${imageCaptureSupported ? "ImageCapture API" : "Video Stream"}`
+    );
+  };
+
   const downloadOMR = () => {
     if (croppedImage) {
       const link = document.createElement("a");
-      link.download = `OMR-${omrType}-${Date.now()}.jpg`;
+      link.download = `OMR-${omrType}-${Date.now()}.png`;
       link.href = croppedImage.url;
       document.body.appendChild(link);
       link.click();
@@ -621,11 +734,11 @@ const EnhancedMobileOMRScanner = () => {
               <small>
                 • Hold device steady in portrait mode
                 <br />
-                • Align OMR sheet within green frame
+                • Align A4 OMR sheet within green frame
                 <br />
                 • Ensure good lighting for best results
                 <br />
-                • Grid lines help with alignment
+                • Use back camera for higher resolution
                 <br />• Tap to hide this message
               </small>
             </div>
@@ -712,7 +825,11 @@ const EnhancedMobileOMRScanner = () => {
                 <FileText size={80} className="mb-4 text-success opacity-75" />
                 <h4 className="mb-3 text-light">Ready to Scan OMR</h4>
                 <p className="text-muted mb-4">
-                  High-quality scanning with grid detection
+                  Ultra HD A4 scanning with automatic adjustment
+                  <br />
+                  <small className="text-info">
+                    📄 Optimized for A4 paper (210×297mm)
+                  </small>
                 </p>
                 <button
                   onClick={startCamera}
@@ -793,7 +910,7 @@ const EnhancedMobileOMRScanner = () => {
           <div className="text-center mb-4">
             <CheckCircle size={32} className="text-success mb-2" />
             <h4 className="text-success mb-1">Scan Successful!</h4>
-            <small className="text-muted">Enhanced processing applied</small>
+            <small className="text-muted">Lossless PNG • Perfect Quality</small>
           </div>
 
           <div className="bg-black rounded mb-4 p-2">
@@ -831,7 +948,19 @@ const EnhancedMobileOMRScanner = () => {
                 <div className="col-6">
                   <strong>Quality:</strong>
                 </div>
-                <div className="col-6 text-success">Enhanced (95%)</div>
+                <div className="col-6 text-success">Lossless PNG</div>
+
+                <div className="col-6">
+                  <strong>Format:</strong>
+                </div>
+                <div className="col-6 text-warning">PNG (No Compression)</div>
+
+                <div className="col-6">
+                  <strong>A4 Optimized:</strong>
+                </div>
+                <div className="col-6 text-info">
+                  {croppedImage.optimizedForA4 ? "✓ Yes" : "Standard"}
+                </div>
 
                 <div className="col-12 mt-2 pt-2 border-top">
                   <strong>Timestamp:</strong>{" "}
