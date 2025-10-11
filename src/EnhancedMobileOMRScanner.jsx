@@ -31,6 +31,8 @@ const EnhancedMobileOMRScanner = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [cameraInitialized, setCameraInitialized] = useState(false);
   const [imageCaptureSupported, setImageCaptureSupported] = useState(false);
+  const [permissionGranted, setPermissionGranted] = useState(false);
+  const [deviceId, setDeviceId] = useState(null);
   const imageCaptureRef = useRef(null);
 
   // A4 Paper optimized OMR configurations (A4 = 210mm × 297mm, ratio 1:1.414)
@@ -112,16 +114,48 @@ const EnhancedMobileOMRScanner = () => {
     console.log("Force cleanup completed");
   }, []);
 
-  // Get available camera devices
+  // Get available camera devices and check permissions
   useEffect(() => {
     const initializeDevices = async () => {
       try {
+        // Check permission status first (if supported)
+        if (navigator.permissions && navigator.permissions.query) {
+          try {
+            const permissionStatus = await navigator.permissions.query({
+              name: "camera",
+            });
+            console.log("Camera permission status:", permissionStatus.state);
+
+            if (permissionStatus.state === "granted") {
+              setPermissionGranted(true);
+            }
+
+            // Listen for permission changes
+            permissionStatus.onchange = () => {
+              console.log("Permission changed:", permissionStatus.state);
+              setPermissionGranted(permissionStatus.state === "granted");
+              if (permissionStatus.state === "granted") {
+                setError(null);
+              }
+            };
+          } catch (e) {
+            console.log("Permission API not fully supported");
+          }
+        }
+
         // Request permissions first
         const tempStream = await navigator.mediaDevices.getUserMedia({
-          video: true,
+          video: { facingMode: "environment" },
         });
+
+        setPermissionGranted(true);
+        setError(null);
+
         // Stop the temp stream immediately
         tempStream.getTracks().forEach((track) => track.stop());
+
+        // Small delay to ensure proper cleanup
+        await new Promise((resolve) => setTimeout(resolve, 300));
 
         const deviceList = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = deviceList.filter(
@@ -129,9 +163,39 @@ const EnhancedMobileOMRScanner = () => {
         );
         setDevices(videoDevices);
         console.log("Available cameras:", videoDevices.length);
+
+        // Find rear camera by default
+        const rearCamera = videoDevices.find(
+          (device) =>
+            device.label.toLowerCase().includes("back") ||
+            device.label.toLowerCase().includes("rear") ||
+            device.label.toLowerCase().includes("environment")
+        );
+
+        if (rearCamera) {
+          setDeviceId(rearCamera.deviceId);
+          console.log("Rear camera found:", rearCamera.label);
+        } else if (videoDevices.length > 0) {
+          // Use last camera (usually rear on mobile)
+          setDeviceId(videoDevices[videoDevices.length - 1].deviceId);
+          console.log(
+            "Using last camera:",
+            videoDevices[videoDevices.length - 1].label
+          );
+        }
       } catch (err) {
         console.error("Error getting devices:", err);
-        setError("Camera permission required");
+        setPermissionGranted(false);
+        if (
+          err.name === "NotAllowedError" ||
+          err.name === "PermissionDeniedError"
+        ) {
+          setError(
+            "📷 Camera permission denied. Please enable camera access in your browser settings."
+          );
+        } else {
+          setError("❌ Camera access required. Please grant permission.");
+        }
       }
     };
 
@@ -171,21 +235,25 @@ const EnhancedMobileOMRScanner = () => {
 
       // High-resolution constraints optimized for A4 paper scanning
       const constraints = {
-        video: {
-          facingMode: { ideal: facingMode },
-          // Request maximum resolution for A4 scanning (up to 4K)
-          width: { min: 1920, ideal: 3840, max: 4096 },
-          height: { min: 1080, ideal: 2160, max: 4096 },
-          frameRate: { ideal: 30, max: 60 },
-          // A4 aspect ratio optimization (portrait mode)
-          aspectRatio: { ideal: 9 / 16 },
-          // Request highest quality settings
-          ...(facingMode === "environment" && {
-            focusMode: { ideal: "continuous" },
-            exposureMode: { ideal: "continuous" },
-            whiteBalanceMode: { ideal: "continuous" },
-          }),
-        },
+        video: deviceId
+          ? {
+              deviceId: { exact: deviceId },
+              // Request maximum resolution for A4 scanning (up to 4K)
+              width: { min: 1920, ideal: 3840, max: 4096 },
+              height: { min: 1080, ideal: 2160, max: 4096 },
+              frameRate: { ideal: 30, max: 60 },
+              // A4 aspect ratio optimization (portrait mode)
+              aspectRatio: { ideal: 9 / 16 },
+            }
+          : {
+              facingMode: { exact: facingMode },
+              // Request maximum resolution for A4 scanning (up to 4K)
+              width: { min: 1920, ideal: 3840, max: 4096 },
+              height: { min: 1080, ideal: 2160, max: 4096 },
+              frameRate: { ideal: 30, max: 60 },
+              // A4 aspect ratio optimization (portrait mode)
+              aspectRatio: { ideal: 9 / 16 },
+            },
         audio: false,
       };
 
@@ -321,7 +389,7 @@ const EnhancedMobileOMRScanner = () => {
       forceCleanup();
       throw err;
     }
-  }, [facingMode, forceCleanup]);
+  }, [facingMode, deviceId, forceCleanup]);
 
   const stopCamera = useCallback(() => {
     console.log("Stopping camera...");
@@ -596,10 +664,32 @@ const EnhancedMobileOMRScanner = () => {
     if (isLoading) return;
 
     console.log("Switching camera...");
-    const newFacingMode = facingMode === "environment" ? "user" : "environment";
-    setFacingMode(newFacingMode);
 
-    // Force stop and restart with new facing mode
+    // Find next camera in the list
+    if (devices.length > 1) {
+      const currentIndex = devices.findIndex(
+        (device) => device.deviceId === deviceId
+      );
+      const nextIndex = (currentIndex + 1) % devices.length;
+      const nextDevice = devices[nextIndex];
+
+      console.log("Switching to:", nextDevice.label);
+      setDeviceId(nextDevice.deviceId);
+
+      // Also update facing mode for fallback
+      const isRear =
+        nextDevice.label.toLowerCase().includes("back") ||
+        nextDevice.label.toLowerCase().includes("rear") ||
+        nextDevice.label.toLowerCase().includes("environment");
+      setFacingMode(isRear ? "environment" : "user");
+    } else {
+      // Fallback to facingMode toggle if device list not available
+      const newFacingMode =
+        facingMode === "environment" ? "user" : "environment";
+      setFacingMode(newFacingMode);
+    }
+
+    // Force stop and restart with new camera
     forceCleanup();
 
     // Wait a bit longer for cleanup
@@ -612,7 +702,7 @@ const EnhancedMobileOMRScanner = () => {
       console.error("Camera switch failed:", err);
       setError("Camera switch failed. Please try again.");
     }
-  }, [facingMode, isLoading, forceCleanup, startCamera]);
+  }, [facingMode, deviceId, devices, isLoading, forceCleanup, startCamera]);
 
   const VerticalOMROverlay = () => {
     const config = omrConfigs[omrType];
@@ -784,9 +874,25 @@ const EnhancedMobileOMRScanner = () => {
 
       {/* Error Display */}
       {error && (
-        <div className="alert alert-warning m-3 py-2" role="alert">
+        <div className="alert alert-warning m-3 py-2 mb-2" role="alert">
           <AlertTriangle size={16} className="me-2" />
           <small>{error}</small>
+        </div>
+      )}
+
+      {/* Camera Info */}
+      {isStreaming && devices.length > 0 && (
+        <div className="bg-dark bg-opacity-50 mx-3 mt-2 px-3 py-2 rounded">
+          <small className="text-light d-flex align-items-center">
+            <Camera size={14} className="me-2 text-success" />
+            {devices.find((d) => d.deviceId === deviceId)?.label ||
+              `${facingMode === "environment" ? "Rear" : "Front"} Camera`}
+            {devices.length > 1 && (
+              <span className="ms-2 text-muted">
+                ({devices.length} available)
+              </span>
+            )}
+          </small>
         </div>
       )}
 
@@ -830,6 +936,14 @@ const EnhancedMobileOMRScanner = () => {
                   <small className="text-info">
                     📄 Optimized for A4 paper (210×297mm)
                   </small>
+                  {!permissionGranted && (
+                    <>
+                      <br />
+                      <small className="text-warning mt-2 d-block">
+                        ⚠️ Camera permission required
+                      </small>
+                    </>
+                  )}
                 </p>
                 <button
                   onClick={startCamera}
@@ -837,8 +951,15 @@ const EnhancedMobileOMRScanner = () => {
                   disabled={isLoading}
                 >
                   <Camera className="me-2" size={20} />
-                  Start Camera
+                  {permissionGranted ? "Start Camera" : "Enable Camera"}
                 </button>
+                {devices.length > 1 && (
+                  <div className="mt-3">
+                    <small className="text-muted">
+                      {devices.length} cameras detected
+                    </small>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -860,11 +981,16 @@ const EnhancedMobileOMRScanner = () => {
 
                 <button
                   onClick={switchCamera}
-                  disabled={isLoading}
+                  disabled={isLoading || devices.length <= 1}
                   className="btn btn-sm btn-outline-light"
-                  title="Switch Camera"
+                  title={`Switch Camera${
+                    devices.length > 1 ? ` (${devices.length} available)` : ""
+                  }`}
                 >
                   <RotateCcw size={16} />
+                  {devices.length > 1 && (
+                    <span className="ms-1 badge bg-info">{devices.length}</span>
+                  )}
                 </button>
 
                 <button
