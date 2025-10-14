@@ -1,10 +1,8 @@
-import EnhancedMobileOMRScanner from "./EnhancedMobileOMRScanner";
-import SimpleOMRScanner from "./simple";
+import MobileCameraApp from "./MobileCameraApp";
 function App() {
   return (
     <>
-      <SimpleOMRScanner />
-      {/* <EnhancedMobileOMRScanner /> */}
+      <MobileCameraApp />
     </>
   );
 }
